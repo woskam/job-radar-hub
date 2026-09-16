@@ -1,0 +1,22 @@
+[
+  {
+    "source": "workday",
+    "external_id": "R00012345",
+    "title": "Senior Digital Sales Manager",
+    "company": "Sample Sportswear Co",
+    "location": "Amsterdam, Netherlands",
+    "url": "https://example.com/jobs/R00012345",
+    "description": "We are looking for an experienced digital sales manager to lead our ecommerce strategy.",
+    "scraped_at": "2026-09-10T08:00:00+00:00"
+  },
+  {
+    "source": "greenhouse",
+    "external_id": "5431973",
+    "title": "Director Wholesale Europe",
+    "company": "Sample Fashion Group",
+    "location": "Rotterdam, Netherlands",
+    "url": "https://example.com/jobs/5431973",
+    "description": "Own the wholesale digital strategy across Europe.",
+    "scraped_at": "2026-09-10T08:00:00+00:00"
+  }
+]

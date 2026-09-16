@@ -1,0 +1,18 @@
+[Unit]
+Description=Job Radar Hub (public listings API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/job-radar-hub
+# -w 1: Flask-Limiter's rate limiting is in-memory per-process -- multiple
+# workers would each keep their own counter, silently multiplying every
+# consumer's effective rate limit. Fine at this traffic scale; revisit with
+# a shared store (e.g. Redis) if this ever needs more than one worker.
+ExecStart=/opt/job-radar-hub/venv/bin/gunicorn -w 1 -b 0.0.0.0:5300 app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
