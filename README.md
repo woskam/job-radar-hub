@@ -105,8 +105,21 @@ gcloud compute instances create job-radar-hub \
   --zone=us-central1-a \
   --machine-type=e2-micro \
   --image-family=debian-12 --image-project=debian-cloud \
+  --boot-disk-type=pd-standard --boot-disk-size=10GB \
   --tags=job-radar-hub \
+  --no-service-account --no-scopes \
   --metadata-from-file=startup-script=deploy/gce-startup-script.sh
+# --boot-disk-type=pd-standard matters: GCP's current default is pd-balanced,
+# which is NOT covered by the Always Free tier (small but real ongoing cost).
+# No --address flag -- an ephemeral (not static/reserved) external IP is
+# free while the VM is running; a reserved static IP costs money even when
+# unattached, and there's no need for one until a real domain points here.
+# --no-service-account --no-scopes: this VM never calls any GCP API itself
+# (it only talks to its own SQLite db and answers HTTP requests), so it
+# doesn't need one attached -- also sidesteps needing the deploying
+# identity to hold iam.serviceAccountUser on the project's default service
+# account, which a scoped-down deployer (e.g. just Compute Admin) won't
+# have by default.
 
 # 3. Open the firewall for the app's port (5300).
 gcloud compute firewall-rules create allow-job-radar-hub \
