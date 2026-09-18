@@ -1,0 +1,15 @@
+[Unit]
+Description=Job Radar Hub MCP server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/job-radar-hub
+Environment=MCP_PORT=5301
+ExecStart=/opt/job-radar-hub/venv/bin/python mcp_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

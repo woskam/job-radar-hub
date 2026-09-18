@@ -27,9 +27,10 @@ python3 -m venv venv
 ./venv/bin/pip install --quiet --upgrade pip
 ./venv/bin/pip install --quiet -r requirements.txt
 
-# .env is NOT created here -- if this is a first boot, the service will fail
-# to start until you SSH in and create it by hand (see README.md).
+# .env is NOT created here -- if this is a first boot, the services will
+# fail to start until you SSH in and create it by hand (see README.md).
 install -m 644 systemd/job-radar-hub.service /etc/systemd/system/job-radar-hub.service
+install -m 644 systemd/job-radar-hub-mcp.service /etc/systemd/system/job-radar-hub-mcp.service
 systemctl daemon-reload
-systemctl enable job-radar-hub.service
-systemctl restart job-radar-hub.service || true
+systemctl enable job-radar-hub.service job-radar-hub-mcp.service
+systemctl restart job-radar-hub.service job-radar-hub-mcp.service || true

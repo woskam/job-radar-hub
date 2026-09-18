@@ -10,7 +10,6 @@ entirely their own responsibility.
 """
 
 import os
-import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,23 +22,11 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from db.migrations import ensure_columns
+from db.queries import LISTING_FIELDS, get_db, lookup_api_key, query_listings
 
-DB_PATH = Path(os.environ.get("HUB_DB_PATH", ROOT / "db" / "hub.db"))
-SCHEMA_PATH = ROOT / "db" / "schema.sql"
 HUB_PUSH_TOKEN = os.environ.get("HUB_PUSH_TOKEN")
 
-LISTING_FIELDS = ["source", "external_id", "title", "company", "location", "url", "description", "scraped_at"]
-
 app = Flask(__name__)
-
-
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA_PATH.read_text())
-    ensure_columns(conn)
-    return conn
 
 
 def _bearer_token() -> str:
@@ -47,20 +34,11 @@ def _bearer_token() -> str:
     return auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
 
 
-def _lookup_api_key(key: str) -> sqlite3.Row | None:
-    if not key:
-        return None
-    conn = get_db()
-    row = conn.execute("SELECT * FROM api_keys WHERE key = ? AND revoked = 0", (key,)).fetchone()
-    conn.close()
-    return row
-
-
 def _jobs_rate_limit() -> str:
     # Cache the lookup on g -- this callable and the view function run in
     # the same request context, so the view can reuse it via g.api_key_row
     # instead of hitting the DB twice.
-    g.api_key_row = _lookup_api_key(_bearer_token())
+    g.api_key_row = lookup_api_key(_bearer_token())
     limit = g.api_key_row["rate_limit_per_hour"] if g.api_key_row else 10
     return f"{limit} per hour"
 
@@ -119,28 +97,16 @@ def jobs():
     if not g.get("api_key_row"):
         return jsonify({"error": "invalid or missing API key"}), 401
 
-    conn = get_db()
-    clauses, params = ["active = ?"], [request.args.get("active", "1") not in ("0", "false")]
-    for field, param in (("company", "company"), ("source", "source")):
-        value = request.args.get(param)
-        if value:
-            clauses.append(f"{field} = ?")
-            params.append(value)
-    for field, param in (("title", "title_contains"), ("location", "location_contains")):
-        value = request.args.get(param)
-        if value:
-            clauses.append(f"{field} LIKE ?")
-            params.append(f"%{value}%")
-
-    limit = min(int(request.args.get("limit", 50)), 200)
-    offset = max(int(request.args.get("offset", 0)), 0)
-    rows = conn.execute(
-        f"SELECT {', '.join(LISTING_FIELDS)} FROM listings WHERE {' AND '.join(clauses)} "
-        "ORDER BY scraped_at DESC LIMIT ? OFFSET ?",
-        (*params, limit, offset),
-    ).fetchall()
-    conn.close()
-    return jsonify({"count": len(rows), "results": [dict(r) for r in rows]})
+    results = query_listings(
+        company=request.args.get("company"),
+        source=request.args.get("source"),
+        title_contains=request.args.get("title_contains"),
+        location_contains=request.args.get("location_contains"),
+        active=request.args.get("active", "1") not in ("0", "false"),
+        limit=int(request.args.get("limit", 50)),
+        offset=int(request.args.get("offset", 0)),
+    )
+    return jsonify({"count": len(results), "results": results})
 
 
 if __name__ == "__main__":
