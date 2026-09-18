@@ -63,6 +63,31 @@ by hand, see below). Query params: `company`, `source`,
 
 `GET /health` -- no auth, liveness check.
 
+## MCP server
+
+`mcp_server.py` exposes the same data over the Model Context Protocol
+(Streamable HTTP transport) as a single `search_jobs` tool -- same filters
+as `GET /jobs`, same API keys. Runs as its own process (default port
+`5301`), separate from the Flask/gunicorn REST API: the MCP SDK is
+Starlette/ASGI-based, so a second small process is simpler than bridging
+WSGI and ASGI in one. Auth and rate limiting are hand-rolled
+(`mcp_server.py::AuthMiddleware`) against the same `api_keys` table the
+REST API uses, rather than the SDK's OAuth-oriented `token_verifier` --
+there's no OAuth issuer here, just the same static bearer tokens.
+
+```bash
+./venv/bin/python mcp_server.py   # local dev, reads MCP_PORT from .env (default 5301)
+```
+
+The SDK's DNS-rebinding protection only allows `Host: localhost` by
+default -- set `MCP_ALLOWED_HOSTS` in `.env` (comma-separated) to the
+real host(s) this is served from, or every request gets a `421
+Misdirected Request`.
+
+Server card published at
+[job-radar-c66.pages.dev/.well-known/mcp/server-card.json](https://job-radar-c66.pages.dev/.well-known/mcp/server-card.json)
+(see the [job-radar-site](https://github.com/woskam/job-radar-site) repo).
+
 ## Setup
 
 ```bash
@@ -121,10 +146,13 @@ gcloud compute instances create job-radar-hub \
 # account, which a scoped-down deployer (e.g. just Compute Admin) won't
 # have by default.
 
-# 3. Open the firewall for the app's port (5300).
+# 3. Open the firewall for both ports -- 5300 (REST API), 5301 (MCP server).
 gcloud compute firewall-rules create allow-job-radar-hub \
   --allow=tcp:5300 --target-tags=job-radar-hub \
   --description="Job Radar Hub API"
+gcloud compute firewall-rules create allow-job-radar-hub-mcp \
+  --allow=tcp:5301 --target-tags=job-radar-hub \
+  --description="Job Radar Hub MCP server"
 
 # 4. SSH in once to create .env by hand -- never baked into the startup
 #    script or committed (same convention as job-radar's own .env).
@@ -133,8 +161,8 @@ gcloud compute ssh job-radar-hub --zone=us-central1-a
   cd /opt/job-radar-hub
   cp .env.example .env
   python3 -c "import secrets; print(secrets.token_urlsafe(32))"  # paste into HUB_PUSH_TOKEN=
-  nano .env
-  systemctl restart job-radar-hub
+  nano .env   # also set MCP_ALLOWED_HOSTS=<this VM's IP>:5301 (see "MCP server" above)
+  systemctl restart job-radar-hub job-radar-hub-mcp
 
 # 5. Confirm it's reachable.
 IP=$(gcloud compute instances describe job-radar-hub --zone=us-central1-a \
