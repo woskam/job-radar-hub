@@ -122,8 +122,22 @@ class AuthMiddleware:
         return await self.app(scope, receive, send)
 
 
+def _transport_security():
+    # The SDK's DNS-rebinding protection only allows "localhost" by default --
+    # anything else (our real host, or later a real domain) gets a 421
+    # Misdirected Request without this. MCP_ALLOWED_HOSTS is a comma-separated
+    # list so the real deploy target (currently a bare IP:port, later a
+    # domain) can be updated via .env without a code change.
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    hosts = ["localhost", "127.0.0.1"] + [
+        h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()
+    ]
+    return TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=["*"])
+
+
 def build_app():
-    mcp_app = server.streamable_http_app(stateless_http=True)
+    mcp_app = server.streamable_http_app(stateless_http=True, transport_security=_transport_security())
     return AuthMiddleware(mcp_app)
 
 
