@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = ROOT / "db" / "schema.sql"
 
 LISTING_FIELDS = ["source", "external_id", "title", "company", "location", "url", "description", "scraped_at"]
+# What /jobs and the MCP tool return, in addition to LISTING_FIELDS --
+# last_seen_at is this Hub's own receive-time, updated on every ingest that
+# touches a listing, so it's a genuine freshness signal a consumer can rely
+# on (unlike scraped_at, which is fixed at first-seen time and never moves).
+OUTPUT_FIELDS = LISTING_FIELDS + ["last_seen_at"]
 
 
 def db_path() -> Path:
@@ -68,7 +73,7 @@ def query_listings(
 
     conn = get_db()
     rows = conn.execute(
-        f"SELECT {', '.join(LISTING_FIELDS)} FROM listings WHERE {' AND '.join(clauses)} "
+        f"SELECT {', '.join(OUTPUT_FIELDS)} FROM listings WHERE {' AND '.join(clauses)} "
         "ORDER BY scraped_at DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
     ).fetchall()

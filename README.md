@@ -25,29 +25,45 @@ their own responsibility, on their own end.
 
 ## Ingest contract
 
-A source instance pushes its full current snapshot of listings as a JSON
-array to `POST /ingest`, authenticated with `Authorization: Bearer
-<HUB_PUSH_TOKEN>` (one shared secret -- this hub assumes a single trusted
-producer per deployment, not a multi-tenant ingest system). Each item:
+A source instance pushes to `POST /ingest`, authenticated with
+`Authorization: Bearer <HUB_PUSH_TOKEN>` (one shared secret -- this hub
+assumes a single trusted producer per deployment, not a multi-tenant
+ingest system). A push is a JSON object, not a bare array:
 
 ```json
 {
-  "source": "workday",
-  "external_id": "R00012345",
-  "title": "Senior Digital Sales Manager",
-  "company": "Sample Sportswear Co",
-  "location": "Amsterdam, Netherlands",
-  "url": "https://example.com/jobs/R00012345",
-  "description": "...",
-  "scraped_at": "2026-09-10T08:00:00+00:00"
+  "scraped_ok": [
+    {"source": "workday", "company": "Sample Sportswear Co"}
+  ],
+  "listings": [
+    {
+      "source": "workday",
+      "external_id": "R00012345",
+      "title": "Senior Digital Sales Manager",
+      "company": "Sample Sportswear Co",
+      "location": "Amsterdam, Netherlands",
+      "url": "https://example.com/jobs/R00012345",
+      "description": "...",
+      "scraped_at": "2026-09-10T08:00:00+00:00"
+    }
+  ]
 }
 ```
 
-Every push is treated as authoritative for "what's live right now":
-anything not included in a push is marked inactive (`active: 0`) and
-disappears from `GET /jobs`'s default results, no separate diff/removal
-step needed. Malformed entries (missing `source`/`external_id`) are
-skipped individually rather than failing the whole batch.
+`scraped_ok` is which `(source, company)` pairs this push is authoritative
+for -- required, and rejected with 400 if empty. `listings` only needs to
+include what's still open for that coverage (may legitimately be `[]` if a
+covered company currently has no open listings). A listing whose
+`(source, company)` is in `scraped_ok` but that isn't in `listings` is
+marked inactive (`active: 0`) and disappears from `GET /jobs`'s default
+results; a listing whose company *isn't* in `scraped_ok` is left
+untouched either way -- a push only ever speaks for what it actually
+covers, never "everything not mentioned this time". This is deliberate:
+if the source's scrape of a company failed or was skipped that cycle, it
+simply won't appear in `scraped_ok`, and nothing of that company's gets
+silently deactivated because of an outage on the producer's end.
+Malformed listing entries (missing `source`/`external_id`) are skipped
+individually rather than failing the whole batch.
 
 Pushing is entirely optional from the source's side -- see
 `job-radar/README.md`'s hub-integration section for how to opt a Job
@@ -59,7 +75,10 @@ Radar instance into pushing here.
 by hand, see below). Query params: `company`, `source`,
 `title_contains`, `location_contains`, `active` (default `true`),
 `limit` (default 50, max 200), `offset`. Rate-limited per key
-(`rate_limit_per_hour`, set at issuance).
+(`rate_limit_per_hour`, set at issuance). Each result includes
+`last_seen_at` -- this Hub's own receive time, updated whenever an ingest
+touches that listing, so it's a genuine freshness signal (unlike
+`scraped_at`, which is fixed at first-seen time and never moves).
 
 `GET /health` -- no auth, liveness check.
 

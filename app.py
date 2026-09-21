@@ -9,6 +9,7 @@ key. What a consumer does with that data (draft, apply, whatever) is
 entirely their own responsibility.
 """
 
+import hmac
 import os
 import sys
 from datetime import datetime, timezone
@@ -53,17 +54,40 @@ def health():
 
 @app.route("/ingest", methods=["POST"])
 def ingest():
-    if not HUB_PUSH_TOKEN or _bearer_token() != HUB_PUSH_TOKEN:
+    if not HUB_PUSH_TOKEN or not hmac.compare_digest(_bearer_token(), HUB_PUSH_TOKEN):
         return jsonify({"error": "invalid or missing push token"}), 401
 
     payload = request.get_json(silent=True)
-    if not isinstance(payload, list):
-        return jsonify({"error": "expected a JSON array of listings"}), 400
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected a JSON object with scraped_ok and listings"}), 400
+
+    # scraped_ok: which (source, company) pairs this push is authoritative
+    # for -- previously a push carried no such scope, so "not in this
+    # payload" was the only staleness signal, and a producer always sent
+    # its entire table (every job it had ever seen), so nothing was ever
+    # NOT in the payload and nothing ever went stale. Scoping deactivation
+    # to this list means a push only speaks for what it actually covers --
+    # a company whose scrape failed upstream is simply absent here, and its
+    # existing listings are left untouched, not wiped.
+    scraped_ok = payload.get("scraped_ok")
+    if not isinstance(scraped_ok, list) or not scraped_ok:
+        return jsonify({"error": "scraped_ok must be a non-empty list; refusing to change liveness for no coverage"}), 400
+    coverage = [
+        (pair.get("source"), pair.get("company"))
+        for pair in scraped_ok
+        if isinstance(pair, dict) and pair.get("source") and pair.get("company")
+    ]
+    if not coverage:
+        return jsonify({"error": "scraped_ok contained no valid {source, company} pairs"}), 400
+
+    listings = payload.get("listings")
+    if not isinstance(listings, list):
+        return jsonify({"error": "listings must be a list (may be empty)"}), 400
 
     now = datetime.now(timezone.utc).isoformat()
     conn = get_db()
-    inserted_or_updated = 0
-    for item in payload:
+    upserted = 0
+    for item in listings:
         if not isinstance(item, dict) or not item.get("source") or not item.get("external_id"):
             continue  # skip malformed entries rather than failing the whole batch
         values = {field: item.get(field) for field in LISTING_FIELDS}
@@ -78,17 +102,22 @@ def ingest():
             """,
             {**values, "now": now},
         )
-        inserted_or_updated += 1
+        upserted += 1
 
-    # Anything not touched by this push is no longer live -- each push is
-    # authoritative for "what's currently live", same as the source scrape
-    # cycle itself treats a fresh scrape as authoritative.
-    cur = conn.execute("UPDATE listings SET active = 0 WHERE last_seen_at < ? AND active = 1", (now,))
-    marked_stale = cur.rowcount
+    # Deactivate only within what this push actually covers -- not "anything
+    # not in this exact payload" (that was the bug: a producer sending its
+    # whole table every time meant this condition could never be true).
+    marked_stale = 0
+    for source, company in coverage:
+        cur = conn.execute(
+            "UPDATE listings SET active = 0 WHERE source = ? AND company = ? AND last_seen_at < ? AND active = 1",
+            (source, company, now),
+        )
+        marked_stale += cur.rowcount
     conn.commit()
     conn.close()
 
-    return jsonify({"received": len(payload), "upserted": inserted_or_updated, "marked_stale": marked_stale})
+    return jsonify({"received": len(listings), "upserted": upserted, "marked_stale": marked_stale})
 
 
 @app.route("/jobs")
