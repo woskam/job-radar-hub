@@ -4,6 +4,7 @@ REST API) and mcp_server.py (the MCP server), so the two surfaces can never
 drift apart on what a filter means or which fields get returned.
 """
 
+import hashlib
 import os
 import sqlite3
 from pathlib import Path
@@ -36,10 +37,12 @@ def get_db() -> sqlite3.Connection:
 
 
 def lookup_api_key(key: str) -> sqlite3.Row | None:
+    # api_keys.key stores sha256(raw key), never the raw key -- see manage.py.
     if not key:
         return None
     conn = get_db()
-    row = conn.execute("SELECT * FROM api_keys WHERE key = ? AND revoked = 0", (key,)).fetchone()
+    key_hash = hashlib.sha256(key.encode()).hexdigest()
+    row = conn.execute("SELECT * FROM api_keys WHERE key = ? AND revoked = 0", (key_hash,)).fetchone()
     conn.close()
     return row
 
