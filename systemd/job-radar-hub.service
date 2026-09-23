@@ -10,7 +10,10 @@ WorkingDirectory=/opt/job-radar-hub
 # workers would each keep their own counter, silently multiplying every
 # consumer's effective rate limit. Fine at this traffic scale; revisit with
 # a shared store (e.g. Redis) if this ever needs more than one worker.
-ExecStart=/opt/job-radar-hub/venv/bin/gunicorn -w 1 -b 0.0.0.0:5300 app:app
+# Port 8080, not 5300 -- Cloudflare's free proxy (needed for TLS without a
+# cert on this VM) only forwards to a fixed allowlist of origin ports
+# (80/8080/8880/2052/2082/2086/2095 for HTTP), 5300 isn't on it.
+ExecStart=/opt/job-radar-hub/venv/bin/gunicorn -w 1 -b 0.0.0.0:8080 app:app
 Restart=on-failure
 RestartSec=5
 

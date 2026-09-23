@@ -222,9 +222,12 @@ gcloud compute instances create job-radar-hub \
 # account, which a scoped-down deployer (e.g. just Compute Admin) won't
 # have by default.
 
-# 3. Open the firewall for both ports -- 5300 (REST API), 5301 (MCP server).
+# 3. Open the firewall for both ports -- 8080 (REST API), 5301 (MCP server).
+#    8080, not something more obviously "ours", because it's on Cloudflare's
+#    fixed allowlist of origin ports its free proxy will forward to (needed
+#    for TLS without a cert on this VM itself) -- 5300 isn't on that list.
 gcloud compute firewall-rules create allow-job-radar-hub \
-  --allow=tcp:5300 --target-tags=job-radar-hub \
+  --allow=tcp:8080 --target-tags=job-radar-hub \
   --description="Job Radar Hub API"
 gcloud compute firewall-rules create allow-job-radar-hub-mcp \
   --allow=tcp:5301 --target-tags=job-radar-hub \
@@ -243,13 +246,20 @@ gcloud compute ssh job-radar-hub --zone=us-central1-a
 # 5. Confirm it's reachable.
 IP=$(gcloud compute instances describe job-radar-hub --zone=us-central1-a \
   --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
-curl "http://$IP:5300/health"
+curl "http://$IP:8080/health"
 ```
 
-No custom domain/TLS yet by design (plain HTTP on the raw port, fine for
-initial testing) -- once a domain is pointed at this VM, put Caddy or
-Cloudflare in front for HTTPS rather than terminating TLS in the app
-itself.
+### Domain + TLS via Cloudflare (no cert on the VM itself)
+
+Once a domain is added to a Cloudflare account: a proxied (orange-cloud) A
+record for a subdomain (e.g. `hub.example.com`) pointing at this VM's IP
+gets a free, automatic TLS certificate at Cloudflare's edge -- no
+Caddy/nginx/cert management needed on the VM. SSL/TLS mode needs to be
+**Flexible** (Cloudflare terminates HTTPS from visitors, then talks plain
+HTTP to the origin) since this app has no certificate of its own -- Full
+mode would fail without one. Set `HUB_PUBLIC_BASE_URL=https://hub.example.com`
+in `.env` afterward so confirm/unsubscribe links in alert emails use the
+real domain instead of the bare IP.
 
 ## Not in v1
 
