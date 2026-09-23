@@ -34,11 +34,17 @@ from db.queries import LISTING_FIELDS, get_db, lookup_api_key, query_listings
 
 HUB_PUSH_TOKEN = os.environ.get("HUB_PUSH_TOKEN")
 # The Hub's own externally-reachable base URL, for confirm/unsubscribe
-# links in emails -- falls back to request.host_url, which works fine when
-# job-radar-site's relay Function hits this app directly by IP:port (see
-# functions/api/alerts-subscribe.js), but an explicit override avoids any
-# surprise if something else ever proxies requests here differently.
+# links in emails -- falls back to request.host_url, which is correct as
+# long as nothing proxies requests here under a different host/port than
+# it's actually reachable at.
 HUB_PUBLIC_BASE_URL = os.environ.get("HUB_PUBLIC_BASE_URL")
+# job-radar-site (the main marketing/product site) calls POST
+# /alerts/subscribe directly from browser JS -- this is the one Hub route
+# that needs CORS, since it's the one thing the site's own JS fetches
+# cross-origin (GET /jobs is proxied server-side by a Cloudflare Pages
+# Function instead, holding a real API key, so it never needs CORS or a
+# client-exposed key).
+SITE_ORIGIN = "https://12getajob.com"
 
 app = Flask(__name__)
 
@@ -160,6 +166,8 @@ def jobs():
         source=request.args.get("source"),
         title_contains=request.args.get("title_contains"),
         location_contains=request.args.get("location_contains"),
+        category=request.args.get("category"),
+        segment=request.args.get("segment"),
         active=request.args.get("active", "1") not in ("0", "false"),
         limit=int(request.args.get("limit", 50)),
         offset=int(request.args.get("offset", 0)),
@@ -235,9 +243,29 @@ def _create_pending_subscriber(payload: dict) -> str | None:
     return None
 
 
-@app.route("/alerts/subscribe", methods=["POST"])
-@limiter.limit("5 per hour", key_func=_alert_client_ip)
+@app.after_request
+def _cors_for_subscribe(response):
+    # Only this one route is meant to be called cross-origin from browser
+    # JS (job-radar-site's /alerts.html) -- GET /jobs is proxied
+    # server-side by a Cloudflare Pages Function instead (holding a real
+    # API key), so it never needs CORS or a client-exposed key, and every
+    # other route here is either same-origin (the HTML /alerts form) or
+    # not meant for browser JS at all (/ingest).
+    if request.path == "/alerts/subscribe":
+        response.headers["Access-Control-Allow-Origin"] = SITE_ORIGIN
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+@app.route("/alerts/subscribe", methods=["POST", "OPTIONS"])
+@limiter.limit("5 per hour", methods=["POST"], key_func=_alert_client_ip)
 def alerts_subscribe():
+    if request.method == "OPTIONS":
+        # CORS preflight -- no body, doesn't count against the rate limit
+        # (scoped to POST only above) or need any of the checks below.
+        return ("", 204)
+
     # Small, explicit cap on this one public route -- there's no app-wide
     # MAX_CONTENT_LENGTH (would risk breaking /ingest's much larger
     # payloads), but a subscribe body is a handful of short strings and

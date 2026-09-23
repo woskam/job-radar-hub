@@ -53,6 +53,8 @@ def query_listings(
     source: str | None = None,
     title_contains: str | None = None,
     location_contains: str | None = None,
+    category: str | None = None,
+    segment: str | None = None,
     active: bool = True,
     limit: int = 50,
     offset: int = 0,
@@ -73,6 +75,12 @@ def query_listings(
     if location_contains:
         clauses.append("location LIKE ?")
         params.append(f"%{location_contains}%")
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if segment:
+        clauses.append("segment = ?")
+        params.append(segment)
 
     conn = get_db()
     rows = conn.execute(
