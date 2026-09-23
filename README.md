@@ -82,6 +82,49 @@ touches that listing, so it's a genuine freshness signal (unlike
 
 `GET /health` -- no auth, liveness check.
 
+## Email alerts
+
+Visitors can save a search and get a daily digest email of new matching
+listings -- the one place this hub stores real personal data (an email
+address), so it's double opt-in and self-service end to end, unlike the
+hand-issued `api_keys`.
+
+- `POST /alerts/subscribe` -- public, no auth. Body:
+  `{"email": "...", "keywords": [...], "exclude_keywords": [...],
+  "location_mode": "remote" | "<city/country text>" | null,
+  "category": "...", "segment": "...", "company": "..."}` (all filter
+  fields optional). Keywords OR together and match against title+
+  description; exclude_keywords NOT together the same way; category/
+  segment match exactly (the same vocabulary as `companies.yaml`);
+  company is a substring match. Always responds with the same generic
+  "check your inbox" message regardless of whether the address is new,
+  already subscribed, or the send failed -- this endpoint is intentionally
+  not an email-existence oracle. Rate-limited per IP and, separately, per
+  target email (max one confirm-send/hour to the same address -- the real
+  abuse case is spamming a stranger's inbox, which per-IP limiting alone
+  doesn't stop).
+- `GET /alerts/confirm/<token>` -- the link in the confirm email. Sets the
+  subscription active.
+- `GET /alerts/unsubscribe/<token>` -- included in every digest email.
+
+Matching happens on `scraped_at` (a listing's first-seen time, fixed once
+and never touched again on a repeat sighting) -- not `last_seen_at`
+(bumped on every ingest touch, including a still-open listing resent
+unchanged by a producer's next scrape cycle).
+
+`send_alerts.py` (run daily via `systemd/job-radar-hub-alerts.timer`)
+matches each active subscriber against listings scraped since their last
+digest, sends via [Resend](https://resend.com), and advances
+`last_sent_at` -- only on a successful send, so a transient failure just
+gets retried on the next day's run instead of silently dropping listings.
+Also purges subscribers stuck in `pending` (never confirmed) after 7
+days, to keep this hub's PII footprint small. See `.env.example` for
+`RESEND_API_KEY`/`ALERTS_FROM_EMAIL`/`HUB_PUBLIC_BASE_URL`.
+
+`manage.py list-subscribers` / `remove-subscriber <id-or-email>` for
+admin/support use (a hard delete, unlike the self-service unsubscribe
+link, which just flips `status`).
+
 ## MCP server
 
 `mcp_server.py` exposes the same data over the Model Context Protocol
@@ -196,6 +239,8 @@ itself.
 
 ## Not in v1
 
-No payment/billing integration and no public self-serve signup --
-consumer keys are issued by hand via `manage.py`. No admin UI. These are
-intentionally deferred until there's real demand to justify them.
+No payment/billing integration and no public self-serve signup for
+*read-API keys* -- those are still issued by hand via `manage.py` (email
+alert subscriptions are self-service, see above, but that's a narrower
+capability than an API key). No admin UI. These are intentionally
+deferred until there's real demand to justify them.

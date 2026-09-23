@@ -1,31 +1,44 @@
 """
 Job Radar Hub -- a public, tokengated read API for generic job-listing data,
 fed by a push from a private Job Radar instance's own scrape cycle (see
-README.md for the ingest contract). Deliberately carries no personal data:
-no relevance score, no application status, no letters/CVs -- those stay on
-whichever instance pushes into this hub. This hub never sends anything to
-an employer; it only serves listing data out to whoever holds a valid API
-key. What a consumer does with that data (draft, apply, whatever) is
-entirely their own responsibility.
+README.md for the ingest contract). The listings themselves carry no
+personal data: no relevance score, no application status, no letters/CVs
+-- those stay on whichever instance pushes into this hub. This hub never
+sends anything to an employer; it only serves listing data out to whoever
+holds a valid API key. What a consumer does with that data (draft, apply,
+whatever) is entirely their own responsibility.
+
+The one exception to "no personal data" is the email-alerts feature (see
+README.md) -- subscribers.email is real PII, double-opt-in and
+self-service unsubscribe throughout, see alerts.py/send_alerts.py.
 """
 
 import hmac
+import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request
 from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
+from alerts import clean_keyword_list, confirm_email_html, new_token, send_email
 from db.queries import LISTING_FIELDS, get_db, lookup_api_key, query_listings
 
 HUB_PUSH_TOKEN = os.environ.get("HUB_PUSH_TOKEN")
+# The Hub's own externally-reachable base URL, for confirm/unsubscribe
+# links in emails -- falls back to request.host_url, which works fine when
+# job-radar-site's relay Function hits this app directly by IP:port (see
+# functions/api/alerts-subscribe.js), but an explicit override avoids any
+# surprise if something else ever proxies requests here differently.
+HUB_PUBLIC_BASE_URL = os.environ.get("HUB_PUBLIC_BASE_URL")
 
 app = Flask(__name__)
 
@@ -33,6 +46,21 @@ app = Flask(__name__)
 def _bearer_token() -> str:
     auth = request.headers.get("Authorization", "")
     return auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+
+
+def _base_url() -> str:
+    return HUB_PUBLIC_BASE_URL or request.host_url.rstrip("/")
+
+
+def _alert_client_ip() -> str:
+    # job-radar-site's relay Function (mixed-content workaround -- the site
+    # is HTTPS, this hub is plain HTTP, see README.md) forwards the real
+    # visitor's IP via this header, since otherwise every relayed request
+    # would show Cloudflare's edge IP here. Best-effort only: a direct hit
+    # on this endpoint (it's public, no auth) can set this header to
+    # anything, so it's not a security boundary, just makes the rate limit
+    # meaningful for traffic that actually came through the site.
+    return request.headers.get("CF-Connecting-IP") or get_remote_address()
 
 
 def _jobs_rate_limit() -> str:
@@ -93,11 +121,12 @@ def ingest():
         values = {field: item.get(field) for field in LISTING_FIELDS}
         conn.execute(
             """
-            INSERT INTO listings (source, external_id, title, company, location, url, description, scraped_at, last_seen_at, active)
-            VALUES (:source, :external_id, :title, :company, :location, :url, :description, :scraped_at, :now, 1)
+            INSERT INTO listings (source, external_id, title, company, location, url, description, scraped_at, category, segment, last_seen_at, active)
+            VALUES (:source, :external_id, :title, :company, :location, :url, :description, :scraped_at, :category, :segment, :now, 1)
             ON CONFLICT (source, external_id) DO UPDATE SET
                 title = excluded.title, company = excluded.company, location = excluded.location,
                 url = excluded.url, description = excluded.description, scraped_at = excluded.scraped_at,
+                category = excluded.category, segment = excluded.segment,
                 last_seen_at = excluded.last_seen_at, active = 1
             """,
             {**values, "now": now},
@@ -136,6 +165,107 @@ def jobs():
         offset=int(request.args.get("offset", 0)),
     )
     return jsonify({"count": len(results), "results": results})
+
+
+_GENERIC_SUBSCRIBE_RESPONSE = {"message": "If that's a valid email, check your inbox to confirm."}
+
+
+@app.route("/alerts/subscribe", methods=["POST"])
+@limiter.limit("5 per hour", key_func=_alert_client_ip)
+def alerts_subscribe():
+    # Small, explicit cap on this one public route -- there's no app-wide
+    # MAX_CONTENT_LENGTH (would risk breaking /ingest's much larger
+    # payloads), but a subscribe body is a handful of short strings and
+    # never needs more than a few KB.
+    if request.content_length and request.content_length > 8192:
+        return jsonify({"error": "payload too large"}), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected a JSON object"}), 400
+
+    # Honeypot -- a real visitor never fills a hidden field. Reject
+    # silently (same generic response) so a bot can't tell it was caught.
+    if payload.get("website"):
+        return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+
+    email = (payload.get("email") or "").strip().lower()
+    if not email or "@" not in email or len(email) > 254:
+        return jsonify({"error": "a valid email is required"}), 400
+
+    keywords = clean_keyword_list(payload.get("keywords"))
+    exclude_keywords = clean_keyword_list(payload.get("exclude_keywords"))
+    location_mode = (payload.get("location_mode") or "").strip()[:200] or None
+    category = (payload.get("category") or "").strip()[:100] or None
+    segment = (payload.get("segment") or "").strip()[:100] or None
+    company = (payload.get("company") or "").strip()[:200] or None
+
+    conn = get_db()
+
+    # Per-target-email throttle -- the real abuse case here is emailing a
+    # stranger's confirm-link over and over, which is orthogonal to
+    # requester IP (the IP-based limiter above only slows down one abusive
+    # caller, not someone rotating IPs to spam a single victim address).
+    row = conn.execute("SELECT last_confirm_sent_at FROM subscribers WHERE email = ?", (email,)).fetchone()
+    if row and row["last_confirm_sent_at"]:
+        last_sent = datetime.fromisoformat(row["last_confirm_sent_at"])
+        if datetime.now(timezone.utc) - last_sent < timedelta(hours=1):
+            conn.close()
+            return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+
+    now = datetime.now(timezone.utc).isoformat()
+    confirm_token = new_token()
+    unsubscribe_token = new_token()
+    conn.execute(
+        """
+        INSERT INTO subscribers
+            (email, status, confirm_token, unsubscribe_token, last_confirm_sent_at,
+             keywords, exclude_keywords, location_mode, category, segment, company, created_at)
+        VALUES (:email, 'pending', :confirm_token, :unsubscribe_token, :now,
+                :keywords, :exclude_keywords, :location_mode, :category, :segment, :company, :now)
+        ON CONFLICT (email) DO UPDATE SET
+            status = 'pending', confirm_token = excluded.confirm_token,
+            unsubscribe_token = excluded.unsubscribe_token, last_confirm_sent_at = excluded.last_confirm_sent_at,
+            keywords = excluded.keywords, exclude_keywords = excluded.exclude_keywords,
+            location_mode = excluded.location_mode, category = excluded.category,
+            segment = excluded.segment, company = excluded.company
+        """,
+        {
+            "email": email, "confirm_token": confirm_token, "unsubscribe_token": unsubscribe_token, "now": now,
+            "keywords": json.dumps(keywords), "exclude_keywords": json.dumps(exclude_keywords),
+            "location_mode": location_mode, "category": category, "segment": segment, "company": company,
+        },
+    )
+    conn.commit()
+    conn.close()
+
+    send_email(email, "Confirm your Job Radar alert", confirm_email_html(_base_url(), confirm_token))
+
+    # Same response whether the email was new, already subscribed, or the
+    # send failed -- never turn this into an email-existence oracle.
+    return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+
+
+@app.route("/alerts/confirm/<token>")
+def alerts_confirm(token):
+    conn = get_db()
+    cur = conn.execute("UPDATE subscribers SET status = 'active' WHERE confirm_token = ? AND status != 'unsubscribed'", (token,))
+    conn.commit()
+    conn.close()
+    if cur.rowcount:
+        return "Subscribed -- you'll get an email when new matching listings appear."
+    return ("That confirmation link is invalid or has already been used.", 404)
+
+
+@app.route("/alerts/unsubscribe/<token>")
+def alerts_unsubscribe(token):
+    conn = get_db()
+    cur = conn.execute("UPDATE subscribers SET status = 'unsubscribed' WHERE unsubscribe_token = ?", (token,))
+    conn.commit()
+    conn.close()
+    if cur.rowcount:
+        return "Unsubscribed -- you won't get any more alert emails."
+    return ("That unsubscribe link is invalid.", 404)
 
 
 if __name__ == "__main__":

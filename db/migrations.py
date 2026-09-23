@@ -5,7 +5,16 @@ import sqlite3
 # so check pragma table_info() ourselves before adding a column. Empty for
 # now (schema.sql covers the initial shape); add future columns here rather
 # than editing schema.sql once real data exists.
-NEW_LISTING_COLUMNS: dict[str, str] = {}
+NEW_LISTING_COLUMNS: dict[str, str] = {
+    # Sourced from companies.yaml on the producer side (see job-radar's
+    # scheduler.py::push_to_hub) -- category is free-text (e.g. "fintech"),
+    # segment is "startup" or NULL/absent (the established-company default).
+    # Existing rows get these backfilled automatically within one ingest
+    # cycle (push_to_hub resends the whole open-listings snapshot every
+    # time, and /ingest is an upsert), no separate backfill script needed.
+    "category": "TEXT",
+    "segment": "TEXT",
+}
 NEW_API_KEY_COLUMNS: dict[str, str] = {
     # Existing rows on an already-deployed hub predate this column and
     # predate storing a hash in `key` -- if any exist, they're revoked here

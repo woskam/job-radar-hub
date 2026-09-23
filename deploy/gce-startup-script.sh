@@ -31,6 +31,9 @@ python3 -m venv venv
 # fail to start until you SSH in and create it by hand (see README.md).
 install -m 644 systemd/job-radar-hub.service /etc/systemd/system/job-radar-hub.service
 install -m 644 systemd/job-radar-hub-mcp.service /etc/systemd/system/job-radar-hub-mcp.service
+install -m 644 systemd/job-radar-hub-alerts.service /etc/systemd/system/job-radar-hub-alerts.service
+install -m 644 systemd/job-radar-hub-alerts.timer /etc/systemd/system/job-radar-hub-alerts.timer
 systemctl daemon-reload
-systemctl enable job-radar-hub.service job-radar-hub-mcp.service
+systemctl enable job-radar-hub.service job-radar-hub-mcp.service job-radar-hub-alerts.timer
 systemctl restart job-radar-hub.service job-radar-hub-mcp.service || true
+systemctl restart job-radar-hub-alerts.timer || true

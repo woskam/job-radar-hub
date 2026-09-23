@@ -14,6 +14,8 @@ Usage:
     python manage.py issue-key --owner "some agent/person" [--rate-limit 100]
     python manage.py revoke-key <id-or-key>
     python manage.py list-keys
+    python manage.py list-subscribers
+    python manage.py remove-subscriber <id-or-email>
 """
 
 import argparse
@@ -69,6 +71,31 @@ def list_keys() -> None:
         print(f"#{row['id']}  {preview}  {row['owner']!r}  {row['rate_limit_per_hour']}/hour  [{status}]  {row['created_at']}")
 
 
+def list_subscribers() -> None:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, email, status, category, segment, company, last_sent_at, created_at FROM subscribers ORDER BY id"
+    ).fetchall()
+    conn.close()
+    for row in rows:
+        filters = ", ".join(f for f in [row["category"], row["segment"], row["company"]] if f) or "(no category/segment/company filter)"
+        print(f"#{row['id']}  {row['email']}  [{row['status']}]  {filters}  last_sent={row['last_sent_at']}  created={row['created_at']}")
+
+
+def remove_subscriber(id_or_email: str) -> None:
+    # A hard delete, not a soft "unsubscribed" status -- this is the admin
+    # tool for an actual data-removal request, distinct from the
+    # self-service unsubscribe link which just flips status (see app.py).
+    conn = get_db()
+    if id_or_email.isdigit():
+        cur = conn.execute("DELETE FROM subscribers WHERE id = ?", (int(id_or_email),))
+    else:
+        cur = conn.execute("DELETE FROM subscribers WHERE email = ?", (id_or_email.strip().lower(),))
+    conn.commit()
+    conn.close()
+    print("Removed." if cur.rowcount else "No such subscriber.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -82,6 +109,11 @@ def main() -> None:
 
     sub.add_parser("list-keys")
 
+    sub.add_parser("list-subscribers")
+
+    remove_sub = sub.add_parser("remove-subscriber")
+    remove_sub.add_argument("id_or_email", help="The numeric id from list-subscribers, or the email address")
+
     args = parser.parse_args()
     if args.command == "issue-key":
         issue_key(args.owner, args.rate_limit)
@@ -89,6 +121,10 @@ def main() -> None:
         revoke_key(args.id_or_key)
     elif args.command == "list-keys":
         list_keys()
+    elif args.command == "list-subscribers":
+        list_subscribers()
+    elif args.command == "remove-subscriber":
+        remove_subscriber(args.id_or_email)
 
 
 if __name__ == "__main__":

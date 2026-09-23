@@ -1,0 +1,9 @@
+[Unit]
+Description=Job Radar Hub email alerts -- daily digest sender
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/job-radar-hub
+ExecStart=/opt/job-radar-hub/venv/bin/python send_alerts.py
