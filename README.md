@@ -222,12 +222,15 @@ gcloud compute instances create job-radar-hub \
 # account, which a scoped-down deployer (e.g. just Compute Admin) won't
 # have by default.
 
-# 3. Open the firewall for both ports -- 8080 (REST API), 5301 (MCP server).
-#    8080, not something more obviously "ours", because it's on Cloudflare's
-#    fixed allowlist of origin ports its free proxy will forward to (needed
-#    for TLS without a cert on this VM itself) -- 5300 isn't on that list.
+# 3. Open the firewall for both ports -- 80 (REST API), 5301 (MCP server).
+#    Port 80, not something more obviously "ours", because Cloudflare's
+#    free proxy in "Flexible" SSL mode (needed for TLS without a cert on
+#    this VM itself) always talks to the origin over plain HTTP on port 80
+#    for a normal https://domain visit -- it does not forward to an
+#    arbitrary origin port there. The systemd unit grants
+#    CAP_NET_BIND_SERVICE so gunicorn can bind :80 without running as root.
 gcloud compute firewall-rules create allow-job-radar-hub \
-  --allow=tcp:8080 --target-tags=job-radar-hub \
+  --allow=tcp:80 --target-tags=job-radar-hub \
   --description="Job Radar Hub API"
 gcloud compute firewall-rules create allow-job-radar-hub-mcp \
   --allow=tcp:5301 --target-tags=job-radar-hub \
@@ -246,7 +249,7 @@ gcloud compute ssh job-radar-hub --zone=us-central1-a
 # 5. Confirm it's reachable.
 IP=$(gcloud compute instances describe job-radar-hub --zone=us-central1-a \
   --format='get(networkInterfaces[0].accessConfigs[0].natIP)')
-curl "http://$IP:8080/health"
+curl "http://$IP/health"
 ```
 
 ### Domain + TLS via Cloudflare (no cert on the VM itself)

@@ -321,4 +321,4 @@ def alerts_unsubscribe(token):
 if __name__ == "__main__":
     # Local dev only -- the systemd unit runs this through gunicorn instead
     # (Flask's built-in server isn't meant for real traffic).
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 80)))

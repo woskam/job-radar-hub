@@ -31,7 +31,7 @@ load_dotenv(ROOT / ".env")
 from alerts import digest_email_html, send_email
 from db.queries import get_db, query_new_listings_for_alert
 
-HUB_PUBLIC_BASE_URL = os.environ.get("HUB_PUBLIC_BASE_URL", "http://localhost:8080")
+HUB_PUBLIC_BASE_URL = os.environ.get("HUB_PUBLIC_BASE_URL", "http://localhost")
 PENDING_EXPIRY_DAYS = 7
 SEND_PACING_SECONDS = 0.5  # Resend's rate limit -- avoid a burst of 429s mid-run.
 
