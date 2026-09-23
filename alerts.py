@@ -68,6 +68,70 @@ def send_email(to: str, subject: str, html: str) -> str:
     return "sent"
 
 
+CATEGORIES = [
+    "ai_ml", "b2b", "banking", "beauty", "climate", "consulting", "consumer", "crypto", "devtools",
+    "ecommerce", "education", "enterprise", "fashion", "fintech", "fmcg", "government", "healthcare",
+    "healthtech", "industrials", "insurance", "marketplace", "mobility", "other", "overheid", "pharma",
+    "real_estate_and_construction", "resilience", "saas", "semiconductor", "sportswear", "staffing",
+    "tech", "telecom",
+]
+
+_FORM_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Radar Alerts</title>
+<meta name="robots" content="noindex">
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 560px; margin: 48px auto; padding: 0 20px; color: #1a1a1a; }}
+h1 {{ font-size: 28px; }}
+p.tagline {{ color: #5a5a5a; }}
+input, select, button {{ font: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid #d0d0d0; border-radius: 6px; }}
+input, select {{ width: 100%; box-sizing: border-box; margin-bottom: 10px; }}
+label.checkbox {{ display: flex; align-items: center; gap: 6px; font-size: 14px; margin-bottom: 10px; }}
+label.checkbox input {{ width: auto; margin: 0; }}
+button {{ background: #1e5a8a; color: #fff; border: none; cursor: pointer; font-weight: 600; }}
+.row {{ display: flex; gap: 8px; }}
+.row > * {{ flex: 1; }}
+.message {{ padding: 10px 14px; border-radius: 6px; background: #f4f4f4; margin-bottom: 16px; }}
+.honeypot {{ position: absolute; left: -9999px; }}
+a {{ color: #1e5a8a; }}
+</style>
+</head>
+<body>
+<p><a href="https://job-radar-c66.pages.dev/">&larr; Job Radar</a></p>
+<h1>Email alerts</h1>
+<p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password -- just an email and an unsubscribe link in every message.</p>
+{message_html}
+<form method="POST">
+  <input type="email" name="email" placeholder="you@example.com" required>
+  <input type="text" name="keywords" placeholder="Keywords, comma-separated (e.g. backend, platform engineer)">
+  <input type="text" name="exclude_keywords" placeholder="Exclude keywords, comma-separated (e.g. senior, intern)">
+  <div class="row">
+    <input type="text" name="location" placeholder="Location (e.g. Amsterdam)">
+    <label class="checkbox"><input type="checkbox" name="remote_only"> Remote only</label>
+  </div>
+  <div class="row">
+    <select name="category"><option value="">Any category</option>{category_options}</select>
+    <select name="segment"><option value="">Any segment</option><option value="startup">Startups &amp; scale-ups only</option></select>
+    <input type="text" name="company" placeholder="Company (optional)">
+  </div>
+  <input class="honeypot" type="text" name="website" tabindex="-1" autocomplete="off">
+  <button type="submit">Subscribe</button>
+</form>
+<p style="font-size:12px;color:#888;margin-top:24px;"><a href="https://job-radar-c66.pages.dev/privacy">Privacy</a></p>
+</body>
+</html>
+"""
+
+
+def render_subscribe_form(message: str | None = None) -> str:
+    category_options = "".join(f'<option value="{c}">{c}</option>' for c in CATEGORIES)
+    message_html = f'<p class="message">{message}</p>' if message else ""
+    return _FORM_TEMPLATE.format(category_options=category_options, message_html=message_html)
+
+
 def confirm_email_html(base_url: str, token: str) -> str:
     link = f"{base_url}/alerts/confirm/{token}"
     return (

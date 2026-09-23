@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from alerts import clean_keyword_list, confirm_email_html, new_token, send_email
+from alerts import clean_keyword_list, confirm_email_html, new_token, render_subscribe_form, send_email
 from db.queries import LISTING_FIELDS, get_db, lookup_api_key, query_listings
 
 HUB_PUSH_TOKEN = os.environ.get("HUB_PUSH_TOKEN")
@@ -170,28 +170,20 @@ def jobs():
 _GENERIC_SUBSCRIBE_RESPONSE = {"message": "If that's a valid email, check your inbox to confirm."}
 
 
-@app.route("/alerts/subscribe", methods=["POST"])
-@limiter.limit("5 per hour", key_func=_alert_client_ip)
-def alerts_subscribe():
-    # Small, explicit cap on this one public route -- there's no app-wide
-    # MAX_CONTENT_LENGTH (would risk breaking /ingest's much larger
-    # payloads), but a subscribe body is a handful of short strings and
-    # never needs more than a few KB.
-    if request.content_length and request.content_length > 8192:
-        return jsonify({"error": "payload too large"}), 413
-
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "expected a JSON object"}), 400
-
-    # Honeypot -- a real visitor never fills a hidden field. Reject
-    # silently (same generic response) so a bot can't tell it was caught.
+def _create_pending_subscriber(payload: dict) -> str | None:
+    """Shared by both /alerts/subscribe (JSON, for any client that can
+    reach this hub directly) and /alerts (HTML form, for job-radar-site --
+    see its own comment for why it needs a same-origin plain-HTML form
+    instead of calling the JSON endpoint). Returns an error message if the
+    input was invalid, else None -- honeypot/throttle hits also return
+    None (same outward behavior as a real signup, deliberately not
+    distinguishable by the caller/response)."""
     if payload.get("website"):
-        return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+        return None  # honeypot -- a real visitor never fills a hidden field
 
     email = (payload.get("email") or "").strip().lower()
     if not email or "@" not in email or len(email) > 254:
-        return jsonify({"error": "a valid email is required"}), 400
+        return "a valid email is required"
 
     keywords = clean_keyword_list(payload.get("keywords"))
     exclude_keywords = clean_keyword_list(payload.get("exclude_keywords"))
@@ -204,14 +196,14 @@ def alerts_subscribe():
 
     # Per-target-email throttle -- the real abuse case here is emailing a
     # stranger's confirm-link over and over, which is orthogonal to
-    # requester IP (the IP-based limiter above only slows down one abusive
-    # caller, not someone rotating IPs to spam a single victim address).
+    # requester IP (the IP-based limiter on the callers only slows down one
+    # abusive caller, not someone rotating IPs to spam a single victim).
     row = conn.execute("SELECT last_confirm_sent_at FROM subscribers WHERE email = ?", (email,)).fetchone()
     if row and row["last_confirm_sent_at"]:
         last_sent = datetime.fromisoformat(row["last_confirm_sent_at"])
         if datetime.now(timezone.utc) - last_sent < timedelta(hours=1):
             conn.close()
-            return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+            return None
 
     now = datetime.now(timezone.utc).isoformat()
     confirm_token = new_token()
@@ -240,10 +232,68 @@ def alerts_subscribe():
     conn.close()
 
     send_email(email, "Confirm your Job Radar alert", confirm_email_html(_base_url(), confirm_token))
+    return None
 
+
+@app.route("/alerts/subscribe", methods=["POST"])
+@limiter.limit("5 per hour", key_func=_alert_client_ip)
+def alerts_subscribe():
+    # Small, explicit cap on this one public route -- there's no app-wide
+    # MAX_CONTENT_LENGTH (would risk breaking /ingest's much larger
+    # payloads), but a subscribe body is a handful of short strings and
+    # never needs more than a few KB.
+    if request.content_length and request.content_length > 8192:
+        return jsonify({"error": "payload too large"}), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "expected a JSON object"}), 400
+
+    error = _create_pending_subscriber(payload)
+    if error:
+        return jsonify({"error": error}), 400
     # Same response whether the email was new, already subscribed, or the
     # send failed -- never turn this into an email-existence oracle.
     return jsonify(_GENERIC_SUBSCRIBE_RESPONSE)
+
+
+@app.route("/alerts", methods=["GET", "POST"])
+@limiter.limit("5 per hour", methods=["POST"], key_func=_alert_client_ip)
+def alerts_form():
+    # A plain, same-origin HTML form -- not JSON via fetch() -- because
+    # job-radar-site is HTTPS and this hub is still plain HTTP (no domain
+    # yet for a real cert). A same-page fetch()/JS POST from an HTTPS page
+    # to a plain-HTTP target is blocked by the browser's mixed-content
+    # rules, and routing it through a Cloudflare Pages Function relay
+    # doesn't work either -- Cloudflare Workers' fetch() refuses any
+    # destination that resolves to a raw IP address outright (confirmed
+    # live: error 1003 "Direct IP Access Not Allowed", even via a
+    # nip.io-style hostname trick, since Cloudflare inspects the resolved
+    # connection target, not the hostname string). A normal top-level link
+    # from job-radar-site to this page isn't subject to either
+    # restriction, so the form lives here instead, same-origin start to
+    # finish. Swap job-radar-site's /alerts page to embed/redirect here
+    # directly, or just move the whole form back once this hub has a real
+    # domain + TLS.
+    if request.content_length and request.content_length > 8192:
+        return ("payload too large", 413)
+
+    message = None
+    if request.method == "POST":
+        payload = {
+            "email": request.form.get("email", ""),
+            "keywords": [s.strip() for s in request.form.get("keywords", "").split(",") if s.strip()],
+            "exclude_keywords": [s.strip() for s in request.form.get("exclude_keywords", "").split(",") if s.strip()],
+            "location_mode": "remote" if request.form.get("remote_only") == "on" else (request.form.get("location", "").strip() or None),
+            "category": request.form.get("category") or None,
+            "segment": request.form.get("segment") or None,
+            "company": request.form.get("company", "").strip() or None,
+            "website": request.form.get("website", ""),
+        }
+        error = _create_pending_subscriber(payload)
+        message = error or "Check your inbox to confirm your subscription."
+
+    return render_subscribe_form(message)
 
 
 @app.route("/alerts/confirm/<token>")

@@ -89,7 +89,21 @@ listings -- the one place this hub stores real personal data (an email
 address), so it's double opt-in and self-service end to end, unlike the
 hand-issued `api_keys`.
 
-- `POST /alerts/subscribe` -- public, no auth. Body:
+- `GET`/`POST /alerts` -- a plain HTML signup form, served directly by
+  this hub rather than from job-radar-site. That's deliberate, not an
+  oversight: job-radar-site is HTTPS and this hub has no TLS yet (no
+  domain to put a cert on), so a same-page JS submit from there would hit
+  the browser's mixed-content blocking -- and routing it through a
+  Cloudflare Pages Function relay doesn't work around that either,
+  confirmed live: Cloudflare Workers' `fetch()` refuses any destination
+  that resolves to a raw IP address outright (error 1003 "Direct IP
+  Access Not Allowed"), even via a nip.io-style hostname trick, since
+  Cloudflare inspects the resolved connection target, not the hostname
+  string. A plain top-level link from job-radar-site to this same-origin
+  form sidesteps both problems. Move the form back once this hub has a
+  real domain + TLS.
+- `POST /alerts/subscribe` -- the same thing as a JSON API instead of an
+  HTML form, for any client that can reach this hub directly. Body:
   `{"email": "...", "keywords": [...], "exclude_keywords": [...],
   "location_mode": "remote" | "<city/country text>" | null,
   "category": "...", "segment": "...", "company": "..."}` (all filter
