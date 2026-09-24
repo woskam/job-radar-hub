@@ -144,7 +144,8 @@ link, which just flips `status`).
 `mcp_server.py` exposes the same data over the Model Context Protocol
 (Streamable HTTP transport) as a single `search_jobs` tool -- same filters
 as `GET /jobs`, same API keys. Runs as its own process (default port
-`5301`), separate from the Flask/gunicorn REST API: the MCP SDK is
+`5301`, bound to `127.0.0.1` only in production -- see "Domain + TLS"
+below for why), separate from the Flask/gunicorn REST API: the MCP SDK is
 Starlette/ASGI-based, so a second small process is simpler than bridging
 WSGI and ASGI in one. Auth and rate limiting are hand-rolled
 (`mcp_server.py::AuthMiddleware`) against the same `api_keys` table the
@@ -152,7 +153,7 @@ REST API uses, rather than the SDK's OAuth-oriented `token_verifier` --
 there's no OAuth issuer here, just the same static bearer tokens.
 
 ```bash
-./venv/bin/python mcp_server.py   # local dev, reads MCP_PORT from .env (default 5301)
+MCP_HOST=0.0.0.0 ./venv/bin/python mcp_server.py   # local dev, reads MCP_PORT from .env (default 5301)
 ```
 
 The SDK's DNS-rebinding protection only allows `Host: localhost` by
@@ -161,7 +162,7 @@ real host(s) this is served from, or every request gets a `421
 Misdirected Request`.
 
 Server card published at
-[job-radar-c66.pages.dev/.well-known/mcp/server-card.json](https://job-radar-c66.pages.dev/.well-known/mcp/server-card.json)
+[12getajob.com/.well-known/mcp/server-card.json](https://12getajob.com/.well-known/mcp/server-card.json)
 (see the [job-radar-site](https://github.com/woskam/job-radar-site) repo).
 
 ## Setup
@@ -222,19 +223,17 @@ gcloud compute instances create job-radar-hub \
 # account, which a scoped-down deployer (e.g. just Compute Admin) won't
 # have by default.
 
-# 3. Open the firewall for both ports -- 80 (REST API), 5301 (MCP server).
-#    Port 80, not something more obviously "ours", because Cloudflare's
+# 3. Open the firewall for port 80 only -- nginx is the single public
+#    entry point (see "Domain + TLS" below), fronting both the REST API
+#    and the MCP server on their own internal-only ports. Cloudflare's
 #    free proxy in "Flexible" SSL mode (needed for TLS without a cert on
 #    this VM itself) always talks to the origin over plain HTTP on port 80
 #    for a normal https://domain visit -- it does not forward to an
-#    arbitrary origin port there. The systemd unit grants
-#    CAP_NET_BIND_SERVICE so gunicorn can bind :80 without running as root.
+#    arbitrary origin port there, which is why nginx (not gunicorn/uvicorn
+#    directly) owns :80.
 gcloud compute firewall-rules create allow-job-radar-hub \
   --allow=tcp:80 --target-tags=job-radar-hub \
-  --description="Job Radar Hub API"
-gcloud compute firewall-rules create allow-job-radar-hub-mcp \
-  --allow=tcp:5301 --target-tags=job-radar-hub \
-  --description="Job Radar Hub MCP server"
+  --description="Job Radar Hub (nginx, fronts both REST API and MCP server)"
 
 # 4. SSH in once to create .env by hand -- never baked into the startup
 #    script or committed (same convention as job-radar's own .env).
@@ -243,7 +242,7 @@ gcloud compute ssh job-radar-hub --zone=us-central1-a
   cd /opt/job-radar-hub
   cp .env.example .env
   python3 -c "import secrets; print(secrets.token_urlsafe(32))"  # paste into HUB_PUSH_TOKEN=
-  nano .env   # also set MCP_ALLOWED_HOSTS=<this VM's IP>:5301 (see "MCP server" above)
+  nano .env   # also set MCP_ALLOWED_HOSTS=<your domain(s)> (see "MCP server" above)
   systemctl restart job-radar-hub job-radar-hub-mcp
 
 # 5. Confirm it's reachable.
@@ -256,13 +255,27 @@ curl "http://$IP/health"
 
 Once a domain is added to a Cloudflare account: a proxied (orange-cloud) A
 record for a subdomain (e.g. `hub.example.com`) pointing at this VM's IP
-gets a free, automatic TLS certificate at Cloudflare's edge -- no
-Caddy/nginx/cert management needed on the VM. SSL/TLS mode needs to be
-**Flexible** (Cloudflare terminates HTTPS from visitors, then talks plain
-HTTP to the origin) since this app has no certificate of its own -- Full
-mode would fail without one. Set `HUB_PUBLIC_BASE_URL=https://hub.example.com`
-in `.env` afterward so confirm/unsubscribe links in alert emails use the
-real domain instead of the bare IP.
+gets a free, automatic TLS certificate at Cloudflare's edge -- no cert
+management needed on the VM. SSL/TLS mode needs to be **Flexible**
+(Cloudflare terminates HTTPS from visitors, then talks plain HTTP to the
+origin) since this app has no certificate of its own -- Full mode would
+fail without one.
+
+**nginx is required, not optional, as soon as there's more than one
+service** (the REST API and the MCP server): Flexible mode always talks
+to the origin on port 80 for a normal `https://<domain>` visit -- it
+doesn't forward to an arbitrary origin port -- and only one process can
+bind `:80`. `deploy/nginx-job-radar.conf` (installed automatically by
+`deploy/gce-startup-script.sh`) is a single nginx site routing by Host
+header: `hub.<domain>` -> the Flask/gunicorn app on `127.0.0.1:8000`,
+`mcp.<domain>` -> the MCP server on `127.0.0.1:5301` (`proxy_buffering
+off` there -- Streamable HTTP is a long-lived, streamed connection).
+Add a second proxied A record for the MCP subdomain the same way as the
+first, and add both hostnames to `MCP_ALLOWED_HOSTS`.
+
+Set `HUB_PUBLIC_BASE_URL=https://hub.example.com` in `.env` afterward so
+confirm/unsubscribe links in alert emails use the real domain instead of
+the bare IP.
 
 ## Not in v1
 
