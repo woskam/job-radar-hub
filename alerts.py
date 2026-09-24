@@ -16,8 +16,19 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY")
 # onboarding@resend.dev works with no domain verification at all, but only
 # ever delivers to the Resend account's own verified email -- fine for
 # building/testing, not for real subscribers. Swap once a domain is
-# verified (see README.md).
+# verified (see README.md). Resend's `from` field accepts a plain address
+# or "Display Name <address>" -- once a domain is verified, set this to
+# e.g. "Alerts - 12getajob.com <alerts@12getajob.com>" so it doesn't show
+# as a bare address in the recipient's inbox.
 ALERTS_FROM_EMAIL = os.environ.get("ALERTS_FROM_EMAIL", "onboarding@resend.dev")
+
+OSS_FOOTER_HTML = (
+    '<p style="color:#888;font-size:12px;margin-top:24px;border-top:1px solid #e2e2e2;padding-top:12px;">'
+    "12GetAJob is built on open source -- "
+    '<a href="https://github.com/woskam/job-radar">job-radar</a> and '
+    '<a href="https://github.com/woskam/job-radar-hub">job-radar-hub</a>. '
+    "Self-host it yourself, or contribute on GitHub.</p>"
+)
 
 
 def new_token() -> str:
@@ -81,7 +92,7 @@ _FORM_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Job Radar Alerts</title>
+<title>12GetAJob Alerts</title>
 <meta name="robots" content="noindex">
 <style>
 body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 560px; margin: 48px auto; padding: 0 20px; color: #1a1a1a; }}
@@ -100,7 +111,7 @@ a {{ color: #1e5a8a; }}
 </style>
 </head>
 <body>
-<p><a href="https://job-radar-c66.pages.dev/">&larr; Job Radar</a></p>
+<p><a href="https://12getajob.com/">&larr; 12GetAJob</a></p>
 <h1>Email alerts</h1>
 <p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password -- just an email and an unsubscribe link in every message.</p>
 {message_html}
@@ -120,7 +131,7 @@ a {{ color: #1e5a8a; }}
   <input class="honeypot" type="text" name="website" tabindex="-1" autocomplete="off">
   <button type="submit">Subscribe</button>
 </form>
-<p style="font-size:12px;color:#888;margin-top:24px;"><a href="https://job-radar-c66.pages.dev/privacy">Privacy</a></p>
+<p style="font-size:12px;color:#888;margin-top:24px;"><a href="https://12getajob.com/privacy">Privacy</a></p>
 </body>
 </html>
 """
@@ -135,9 +146,10 @@ def render_subscribe_form(message: str | None = None) -> str:
 def confirm_email_html(base_url: str, token: str) -> str:
     link = f"{base_url}/alerts/confirm/{token}"
     return (
-        "<p>Confirm your Job Radar alert subscription:</p>"
+        "<p>Confirm your 12GetAJob alert subscription:</p>"
         f'<p><a href="{link}">{link}</a></p>'
         "<p>If you didn't request this, ignore this email -- nothing further will be sent.</p>"
+        + OSS_FOOTER_HTML
     )
 
 
@@ -153,4 +165,5 @@ def digest_email_html(base_url: str, unsubscribe_token: str, listings: list[dict
         f"<ul>{items}</ul>"
         '<p style="color:#888;font-size:12px">'
         f'<a href="{unsub_link}">Unsubscribe</a> from these alerts.</p>'
+        + OSS_FOOTER_HTML
     )

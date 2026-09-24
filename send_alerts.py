@@ -73,7 +73,7 @@ def run() -> dict:
             continue
 
         html = digest_email_html(HUB_PUBLIC_BASE_URL, sub["unsubscribe_token"], listings)
-        result = send_email(sub["email"], f"{len(listings)} new job listing(s) for you", html)
+        result = send_email(sub["email"], f"12GetAJob: {len(listings)} new job listing(s) for you", html)
         if result == "sent":
             sent += 1
             conn.execute("UPDATE subscribers SET last_sent_at = ? WHERE id = ?", (now, sub["id"]))

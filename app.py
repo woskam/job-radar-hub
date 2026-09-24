@@ -239,7 +239,7 @@ def _create_pending_subscriber(payload: dict) -> str | None:
     conn.commit()
     conn.close()
 
-    send_email(email, "Confirm your Job Radar alert", confirm_email_html(_base_url(), confirm_token))
+    send_email(email, "Confirm your 12GetAJob alert", confirm_email_html(_base_url(), confirm_token))
     return None
 
 
