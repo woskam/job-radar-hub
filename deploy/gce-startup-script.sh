@@ -14,7 +14,7 @@ REPO_URL="${REPO_URL:-https://github.com/woskam/job-radar-hub.git}"
 APP_DIR="/opt/job-radar-hub"
 
 apt-get update -y
-apt-get install -y python3-venv python3-pip git
+apt-get install -y python3-venv python3-pip git nginx
 
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" pull --ff-only
@@ -37,3 +37,12 @@ systemctl daemon-reload
 systemctl enable job-radar-hub.service job-radar-hub-mcp.service job-radar-hub-alerts.timer
 systemctl restart job-radar-hub.service job-radar-hub-mcp.service || true
 systemctl restart job-radar-hub-alerts.timer || true
+
+# nginx: single public :80 entry point routing to both services by Host
+# header (see deploy/nginx-job-radar.conf's own header comment for why).
+install -m 644 deploy/nginx-job-radar.conf /etc/nginx/sites-available/job-radar
+ln -sf /etc/nginx/sites-available/job-radar /etc/nginx/sites-enabled/job-radar
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl enable nginx
+systemctl restart nginx

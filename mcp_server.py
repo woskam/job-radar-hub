@@ -146,4 +146,9 @@ app = build_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("MCP_PORT", 5301)))
+    # 127.0.0.1 by default, not 0.0.0.0 -- nginx is the public entry point
+    # (routes mcp.12getajob.com to this port by Host header, see
+    # job-radar-hub-mcp.service), this process itself isn't meant to be
+    # reachable directly from outside the VM anymore. Override MCP_HOST for
+    # local dev if you do want it reachable from elsewhere.
+    uvicorn.run(app, host=os.environ.get("MCP_HOST", "127.0.0.1"), port=int(os.environ.get("MCP_PORT", 5301)))

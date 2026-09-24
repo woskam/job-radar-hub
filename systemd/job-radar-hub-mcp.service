@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/job-radar-hub
 Environment=MCP_PORT=5301
+# Binds 127.0.0.1 by default (see mcp_server.py) -- nginx is the public
+# entry point on :80, proxying mcp.12getajob.com here by Host header. Not
+# reachable directly from outside the VM anymore.
 ExecStart=/opt/job-radar-hub/venv/bin/python mcp_server.py
 Restart=on-failure
 RestartSec=5

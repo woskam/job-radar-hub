@@ -10,16 +10,15 @@ WorkingDirectory=/opt/job-radar-hub
 # workers would each keep their own counter, silently multiplying every
 # consumer's effective rate limit. Fine at this traffic scale; revisit with
 # a shared store (e.g. Redis) if this ever needs more than one worker.
-# Port 80, not 5300 -- Cloudflare's free proxy in "Flexible" SSL mode
-# (needed for TLS without a cert on this VM) always talks to the origin
-# over plain HTTP on port 80 for a normal https://domain visit -- it does
-# NOT forward to an arbitrary origin port there (that alternate-port
-# mapping only applies when the visitor themselves connects on one of
-# Cloudflare's alternate ports, which would mean giving up real HTTPS on
-# the standard port). AmbientCapabilities below lets gunicorn bind :80
-# without running as root.
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-ExecStart=/opt/job-radar-hub/venv/bin/gunicorn -w 1 -b 0.0.0.0:80 app:app
+# 127.0.0.1:8000, not a public port -- nginx (see /etc/nginx/sites-available/
+# job-radar) is now the single public entry point on :80, routing by Host
+# header to this Hub (hub.12getajob.com) or the MCP server
+# (mcp.12getajob.com) -- needed once there were two separate services both
+# wanting Cloudflare Flexible SSL's fixed "always talks to the origin on
+# port 80" behavior; only one process can bind that port, so nginx fronts
+# both instead. See job-radar-hub-mcp.service for the same story on that
+# side.
+ExecStart=/opt/job-radar-hub/venv/bin/gunicorn -w 1 -b 127.0.0.1:8000 app:app
 Restart=on-failure
 RestartSec=5
 
