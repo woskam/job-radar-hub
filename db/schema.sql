@@ -32,17 +32,18 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 -- Email alert subscribers -- this hub's first real personal-data store
--- (an email address). status starts 'pending' until the confirm link is
--- clicked (double opt-in), and becomes 'unsubscribed' rather than being
--- deleted outright when the unsubscribe link is used, so a re-signup with
--- the same address (email UNIQUE) is a clean upsert, not a conflict. All
--- filter fields are optional; NULL/empty means "don't filter on this".
--- keywords/exclude_keywords are JSON arrays (OR'd / NOT'd against
--- title+description); location_mode is NULL (any), 'remote', or a
--- free-text city/country string -- deliberately one field, not a separate
--- remote-only flag alongside a location string, since a listing's
--- location realistically reads as either "Remote" or a city, rarely both,
--- and ANDing two such filters together would silently zero out matches.
+-- (an email address). status is 'pending' until the confirm link is
+-- clicked (double opt-in), then 'active' -- and stays 'active' from then
+-- on: confirmation is a one-time, email-level thing ("one confirm link
+-- covers all your searches"), not something each saved search repeats.
+-- A subscriber never becomes 'unsubscribed' -- opting out is per SEARCH
+-- now (see saved_searches below), not per email.
+--
+-- unsubscribe_token/keywords/exclude_keywords/location_mode/category/
+-- segment/company/last_sent_at below are the pre-multi-search shape,
+-- kept (not dropped -- same conservative migration convention
+-- db/migrations.py already follows elsewhere) but no longer written or
+-- read after db/migrations.py's one-time split into saved_searches.
 CREATE TABLE IF NOT EXISTS subscribers (
     id INTEGER PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
@@ -50,6 +51,33 @@ CREATE TABLE IF NOT EXISTS subscribers (
     confirm_token TEXT NOT NULL,
     unsubscribe_token TEXT NOT NULL,
     last_confirm_sent_at TIMESTAMP,
+    keywords TEXT,
+    exclude_keywords TEXT,
+    location_mode TEXT,
+    category TEXT,
+    segment TEXT,
+    company TEXT,
+    last_sent_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL
+);
+
+-- One row per saved search (a subscriber may have several -- up to
+-- MAX_SAVED_SEARCHES, see db/queries.py). status is 'pending' only
+-- briefly, between a fresh (unconfirmed) subscriber's first search and
+-- their confirm click, which activates every pending search of theirs
+-- at once; a search added later for an already-'active' subscriber
+-- starts 'active' immediately, no confirmation needed. 'unsubscribed'
+-- is the per-search opt-out -- each digest email is about exactly one
+-- search, so its own unsubscribe link only ever stops that one.
+-- last_sent_at is this search's own "new since when" cursor for
+-- send_alerts.py -- each search accumulates matches independently.
+-- Filter field meanings are unchanged from the old inline subscribers
+-- columns (see the comment above): all optional, NULL/empty = no filter.
+CREATE TABLE IF NOT EXISTS saved_searches (
+    id INTEGER PRIMARY KEY,
+    subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    unsubscribe_token TEXT NOT NULL,
     keywords TEXT,
     exclude_keywords TEXT,
     location_mode TEXT,

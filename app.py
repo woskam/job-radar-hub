@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from alerts import clean_keyword_list, confirm_email_html, new_token, render_subscribe_form, send_email
-from db.queries import LISTING_FIELDS, get_db, lookup_api_key, query_listings
+from db.queries import LISTING_FIELDS, MAX_SAVED_SEARCHES, get_db, lookup_api_key, query_listings
 
 HUB_PUSH_TOKEN = os.environ.get("HUB_PUSH_TOKEN")
 # The Hub's own externally-reachable base URL, for confirm/unsubscribe
@@ -202,7 +202,22 @@ def _create_pending_subscriber(payload: dict) -> str | None:
     instead of calling the JSON endpoint). Returns an error message if the
     input was invalid, else None -- honeypot/throttle hits also return
     None (same outward behavior as a real signup, deliberately not
-    distinguishable by the caller/response)."""
+    distinguishable by the caller/response).
+
+    A subscriber can have several saved searches (see db/schema.sql).
+    Email confirmation is one-time and email-level -- "one confirm link
+    covers all your searches" -- so what this does depends on where the
+    email already is:
+      - unknown email: new subscriber (pending) + new search (pending),
+        confirm email sent, same as before this feature existed.
+      - pending email: same 1-hour resend throttle as before; if not
+        throttled, adds another pending search (confirming activates
+        everything still pending at once) and resends the confirm email.
+      - active email: the new search is inserted straight in as active --
+        no confirm email, that's the whole point. Capped at
+        MAX_SAVED_SEARCHES, and a search identical to one they already
+        have active is silently skipped rather than duplicated.
+    """
     if payload.get("website"):
         return None  # honeypot -- a real visitor never fills a hidden field
 
@@ -216,42 +231,80 @@ def _create_pending_subscriber(payload: dict) -> str | None:
     category = (payload.get("category") or "").strip()[:100] or None
     segment = (payload.get("segment") or "").strip()[:100] or None
     company = (payload.get("company") or "").strip()[:200] or None
+    search_values = {
+        "keywords": json.dumps(keywords), "exclude_keywords": json.dumps(exclude_keywords),
+        "location_mode": location_mode, "category": category, "segment": segment, "company": company,
+    }
 
     conn = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    subscriber = conn.execute("SELECT * FROM subscribers WHERE email = ?", (email,)).fetchone()
 
-    # Per-target-email throttle -- the real abuse case here is emailing a
-    # stranger's confirm-link over and over, which is orthogonal to
-    # requester IP (the IP-based limiter on the callers only slows down one
-    # abusive caller, not someone rotating IPs to spam a single victim).
-    row = conn.execute("SELECT last_confirm_sent_at FROM subscribers WHERE email = ?", (email,)).fetchone()
-    if row and row["last_confirm_sent_at"]:
-        last_sent = datetime.fromisoformat(row["last_confirm_sent_at"])
+    if subscriber and subscriber["status"] == "active":
+        existing = conn.execute(
+            "SELECT id, keywords, exclude_keywords, location_mode, category, segment, company "
+            "FROM saved_searches WHERE subscriber_id = ? AND status = 'active'",
+            (subscriber["id"],),
+        ).fetchall()
+        if len(existing) >= MAX_SAVED_SEARCHES:
+            conn.close()
+            return f"you've reached the limit of {MAX_SAVED_SEARCHES} saved searches for this email"
+        if any(
+            e["keywords"] == search_values["keywords"] and e["exclude_keywords"] == search_values["exclude_keywords"]
+            and e["location_mode"] == search_values["location_mode"] and e["category"] == search_values["category"]
+            and e["segment"] == search_values["segment"] and e["company"] == search_values["company"]
+            for e in existing
+        ):
+            conn.close()
+            return None  # identical search already saved and active -- no-op, not a duplicate
+
+        conn.execute(
+            """
+            INSERT INTO saved_searches
+                (subscriber_id, status, unsubscribe_token, keywords, exclude_keywords,
+                 location_mode, category, segment, company, created_at)
+            VALUES (:subscriber_id, 'active', :unsubscribe_token,
+                    :keywords, :exclude_keywords, :location_mode, :category, :segment, :company, :now)
+            """,
+            {"subscriber_id": subscriber["id"], "unsubscribe_token": new_token(), "now": now, **search_values},
+        )
+        conn.commit()
+        conn.close()
+        return None  # already confirmed -- no email to send, the search is just live
+
+    # Unknown or still-pending email: same per-target-email resend throttle
+    # as before -- the real abuse case is emailing a stranger's confirm
+    # link over and over, orthogonal to the caller's IP.
+    if subscriber and subscriber["last_confirm_sent_at"]:
+        last_sent = datetime.fromisoformat(subscriber["last_confirm_sent_at"])
         if datetime.now(timezone.utc) - last_sent < timedelta(hours=1):
             conn.close()
             return None
 
-    now = datetime.now(timezone.utc).isoformat()
     confirm_token = new_token()
-    unsubscribe_token = new_token()
+    if subscriber:
+        conn.execute(
+            "UPDATE subscribers SET confirm_token = ?, last_confirm_sent_at = ? WHERE id = ?",
+            (confirm_token, now, subscriber["id"]),
+        )
+        subscriber_id = subscriber["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO subscribers (email, status, confirm_token, last_confirm_sent_at, "
+            "unsubscribe_token, created_at) VALUES (?, 'pending', ?, ?, ?, ?)",
+            (email, confirm_token, now, new_token(), now),  # unsubscribe_token: unused legacy column, still NOT NULL
+        )
+        subscriber_id = cur.lastrowid
+
     conn.execute(
         """
-        INSERT INTO subscribers
-            (email, status, confirm_token, unsubscribe_token, last_confirm_sent_at,
-             keywords, exclude_keywords, location_mode, category, segment, company, created_at)
-        VALUES (:email, 'pending', :confirm_token, :unsubscribe_token, :now,
+        INSERT INTO saved_searches
+            (subscriber_id, status, unsubscribe_token, keywords, exclude_keywords,
+             location_mode, category, segment, company, created_at)
+        VALUES (:subscriber_id, 'pending', :unsubscribe_token,
                 :keywords, :exclude_keywords, :location_mode, :category, :segment, :company, :now)
-        ON CONFLICT (email) DO UPDATE SET
-            status = 'pending', confirm_token = excluded.confirm_token,
-            unsubscribe_token = excluded.unsubscribe_token, last_confirm_sent_at = excluded.last_confirm_sent_at,
-            keywords = excluded.keywords, exclude_keywords = excluded.exclude_keywords,
-            location_mode = excluded.location_mode, category = excluded.category,
-            segment = excluded.segment, company = excluded.company
         """,
-        {
-            "email": email, "confirm_token": confirm_token, "unsubscribe_token": unsubscribe_token, "now": now,
-            "keywords": json.dumps(keywords), "exclude_keywords": json.dumps(exclude_keywords),
-            "location_mode": location_mode, "category": category, "segment": segment, "company": company,
-        },
+        {"subscriber_id": subscriber_id, "unsubscribe_token": new_token(), "now": now, **search_values},
     )
     conn.commit()
     conn.close()
@@ -348,7 +401,16 @@ def alerts_form():
 @app.route("/alerts/confirm/<token>")
 def alerts_confirm(token):
     conn = get_db()
-    cur = conn.execute("UPDATE subscribers SET status = 'active' WHERE confirm_token = ? AND status != 'unsubscribed'", (token,))
+    cur = conn.execute("UPDATE subscribers SET status = 'active' WHERE confirm_token = ? AND status = 'pending'", (token,))
+    if cur.rowcount:
+        # One confirm click activates every search still pending for this
+        # subscriber, not just the one that triggered the email -- "one
+        # confirm link covers all your searches".
+        subscriber = conn.execute("SELECT id FROM subscribers WHERE confirm_token = ?", (token,)).fetchone()
+        conn.execute(
+            "UPDATE saved_searches SET status = 'active' WHERE subscriber_id = ? AND status = 'pending'",
+            (subscriber["id"],),
+        )
     conn.commit()
     conn.close()
     if cur.rowcount:
@@ -358,12 +420,14 @@ def alerts_confirm(token):
 
 @app.route("/alerts/unsubscribe/<token>")
 def alerts_unsubscribe(token):
+    # Per search, not per subscriber -- each digest email is about exactly
+    # one saved search, so its unsubscribe link only stops that one.
     conn = get_db()
-    cur = conn.execute("UPDATE subscribers SET status = 'unsubscribed' WHERE unsubscribe_token = ?", (token,))
+    cur = conn.execute("UPDATE saved_searches SET status = 'unsubscribed' WHERE unsubscribe_token = ?", (token,))
     conn.commit()
     conn.close()
     if cur.rowcount:
-        return "Unsubscribed -- you won't get any more alert emails."
+        return "Unsubscribed -- you won't get any more emails for that saved search."
     return ("That unsubscribe link is invalid.", 404)
 
 

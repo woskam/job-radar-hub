@@ -113,6 +113,13 @@ def query_listings(
 MAX_ALERT_KEYWORDS = 10
 MAX_ALERT_KEYWORD_LENGTH = 60
 
+# Cap on saved searches per subscriber -- enforced in app.py's
+# _create_pending_subscriber before inserting a new saved_searches row.
+# Keeps one abusive email from accumulating an unbounded number of
+# searches (each one is a daily query + potential email send in
+# send_alerts.py's run).
+MAX_SAVED_SEARCHES = 10
+
 
 def query_new_listings_for_alert(
     conn: sqlite3.Connection,

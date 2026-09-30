@@ -113,7 +113,7 @@ a {{ color: #1e5a8a; }}
 <body>
 <p><a href="https://12getajob.com/">&larr; 12GetAJob</a></p>
 <h1>Email alerts</h1>
-<p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password -- just an email and an unsubscribe link in every message.</p>
+<p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password -- just an email and an unsubscribe link in every message. Already subscribed? Submit another search with the same email -- no need to confirm again.</p>
 {message_html}
 <form method="POST">
   <input type="email" name="email" placeholder="you@example.com" required>
