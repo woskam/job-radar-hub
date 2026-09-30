@@ -86,6 +86,22 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/stats")
+def stats():
+    # Public, no API key, no rate limit -- same "cheap and non-sensitive"
+    # reasoning as /health. Powers job-radar-site's homepage stats strip
+    # (fetched directly cross-origin, see _cors_for_public_routes below,
+    # same pattern as /alerts/subscribe): real aggregate counts, not the
+    # `len(results)`-capped-at-`limit` figure GET /jobs returns, which is
+    # not a true total (see db/queries.py's own note on that).
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) AS jobs, COUNT(DISTINCT company) AS companies FROM listings WHERE active = 1"
+    ).fetchone()
+    conn.close()
+    return jsonify({"companies": row["companies"], "jobs": row["jobs"]})
+
+
 @app.route("/ingest", methods=["POST"])
 def ingest():
     if not HUB_PUSH_TOKEN or not hmac.compare_digest(_bearer_token(), HUB_PUSH_TOKEN):
@@ -245,17 +261,21 @@ def _create_pending_subscriber(payload: dict) -> str | None:
 
 
 @app.after_request
-def _cors_for_subscribe(response):
-    # Only this one route is meant to be called cross-origin from browser
-    # JS (job-radar-site's /alerts.html) -- GET /jobs is proxied
-    # server-side by a Cloudflare Pages Function instead (holding a real
-    # API key), so it never needs CORS or a client-exposed key, and every
-    # other route here is either same-origin (the HTML /alerts form) or
-    # not meant for browser JS at all (/ingest).
+def _cors_for_public_routes(response):
+    # Only these routes are meant to be called cross-origin from browser
+    # JS (job-radar-site's /alerts.html and its homepage stats strip) --
+    # GET /jobs is proxied server-side by a Cloudflare Pages Function
+    # instead (holding a real API key), so it never needs CORS or a
+    # client-exposed key, and every other route here is either same-origin
+    # (the HTML /alerts form) or not meant for browser JS at all (/ingest).
     if request.path == "/alerts/subscribe":
         response.headers["Access-Control-Allow-Origin"] = SITE_ORIGIN
         response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    elif request.path == "/stats":
+        # Simple GET, no custom headers -- no preflight, so just the
+        # allow-origin header is needed, unlike /alerts/subscribe's POST.
+        response.headers["Access-Control-Allow-Origin"] = SITE_ORIGIN
     return response
 
 
