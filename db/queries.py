@@ -55,6 +55,7 @@ def query_listings(
     location_contains: str | None = None,
     category: str | None = None,
     segment: str | None = None,
+    exclude_keywords: list[str] | None = None,
     active: bool = True,
     limit: int = 50,
     offset: int = 0,
@@ -81,6 +82,16 @@ def query_listings(
     if segment:
         clauses.append("segment = ?")
         params.append(segment)
+    if exclude_keywords:
+        # Same shape as query_new_listings_for_alert's exclude_keywords
+        # below -- defensively capped here too even though app.py already
+        # runs the caller's input through clean_keyword_list first, same
+        # "an attacker-supplied huge list would otherwise become a huge
+        # WHERE clause" reasoning as that function's own comment.
+        for kw in exclude_keywords[:MAX_ALERT_KEYWORDS]:
+            kw = kw[:MAX_ALERT_KEYWORD_LENGTH]
+            clauses.append("title NOT LIKE ? AND description NOT LIKE ?")
+            params += [f"%{kw}%", f"%{kw}%"]
 
     conn = get_db()
     rows = conn.execute(
@@ -92,11 +103,13 @@ def query_listings(
     return [dict(r) for r in rows]
 
 
-# Max items/length accepted for keywords/exclude_keywords -- this feeds a
-# public, unauthenticated endpoint (POST /alerts/subscribe), so the caller
-# (app.py) enforces these before ever building a query with them: an
-# attacker-supplied huge list would otherwise become a huge WHERE clause
-# re-run on every subscriber on every daily send_alerts.py run.
+# Max items/length accepted for keywords/exclude_keywords -- feeds both
+# POST /alerts/subscribe (public, unauthenticated) and GET /jobs
+# (tokengated but still consumer-supplied input), so the caller (app.py)
+# enforces these before ever building a query with them: an
+# attacker-supplied huge list would otherwise become a huge WHERE clause,
+# re-run on every subscriber on every daily send_alerts.py run for the
+# alert path, or on every /jobs request for the search path.
 MAX_ALERT_KEYWORDS = 10
 MAX_ALERT_KEYWORD_LENGTH = 60
 

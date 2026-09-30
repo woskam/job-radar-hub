@@ -168,6 +168,7 @@ def jobs():
         location_contains=request.args.get("location_contains"),
         category=request.args.get("category"),
         segment=request.args.get("segment"),
+        exclude_keywords=clean_keyword_list(request.args.get("exclude_keywords", "").split(",")),
         active=request.args.get("active", "1") not in ("0", "false"),
         limit=int(request.args.get("limit", 50)),
         offset=int(request.args.get("offset", 0)),
