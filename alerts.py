@@ -7,6 +7,7 @@ like.
 """
 import os
 import secrets
+from html import escape
 
 import requests
 
@@ -153,17 +154,67 @@ def confirm_email_html(base_url: str, token: str) -> str:
     )
 
 
+def _format_location(location: str | None) -> str:
+    """"Amsterdam, NL; Berlin, DE; Hannover, DE; ..." -> "Amsterdam, NL
+    +2 more locations" -- a multi-location listing would otherwise dump
+    every variant onto one line (a real one has shown up with 10 cities
+    across 8 countries), making the digest unreadable. Only the first
+    location is a link target's actual destination anyway (job.url points
+    at one ATS posting), so showing the rest as a plain count loses
+    nothing a reader could act on."""
+    if not location:
+        return ""
+    parts = [p.strip() for p in location.split(";") if p.strip()]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return escape(parts[0])
+    extra = len(parts) - 1
+    noun = "location" if extra == 1 else "locations"
+    return f'{escape(parts[0])} <span style="color:#9b99a5;">+{extra} more {noun}</span>'
+
+
 def digest_email_html(base_url: str, unsubscribe_token: str, listings: list[dict]) -> str:
-    items = "".join(
-        f'<li><a href="{l["url"]}">{l["title"]}</a> &mdash; {l["company"]}'
-        f'{" (" + l["location"] + ")" if l.get("location") else ""}</li>'
+    cards = "".join(
+        '<div style="border:1px solid #efeef3;border-radius:10px;padding:14px 16px;margin:0 0 10px;">'
+        f'<a href="{escape(l["url"])}" style="display:block;font-size:15px;font-weight:600;'
+        f'color:#0e0e12;text-decoration:none;line-height:1.4;">{escape(l["title"])}</a>'
+        f'<div style="margin-top:4px;font-size:13px;color:#6e6c78;">{escape(l["company"])}'
+        f'{" &middot; " + _format_location(l.get("location")) if l.get("location") else ""}</div>'
+        "</div>"
         for l in listings
     )
     unsub_link = f"{base_url}/alerts/unsubscribe/{unsubscribe_token}"
+    count = len(listings)
     return (
-        f"<p>{len(listings)} new listing(s) matching your saved search:</p>"
-        f"<ul>{items}</ul>"
-        '<p style="color:#888;font-size:12px">'
-        f'<a href="{unsub_link}">Unsubscribe</a> from these alerts.</p>'
-        + OSS_FOOTER_HTML
+        # Table-based, every style inline -- same reasoning as the plain
+        # /alerts form page (see _FORM_TEMPLATE): this has to render
+        # correctly in Gmail/Outlook/Apple Mail, none of which reliably
+        # support a <style> block, flexbox, or grid.
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#f4f3f7;padding:24px 0;font-family:-apple-system,BlinkMacSystemFont,'
+        '\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;"><tr><td align="center">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="max-width:600px;background:#ffffff;border:1px solid #efeef3;border-radius:16px;'
+        'overflow:hidden;">'
+        '<tr><td style="padding:26px 28px 20px;border-bottom:1px solid #efeef3;">'
+        '<div style="font-weight:700;font-size:19px;color:#0e0e12;letter-spacing:-0.01em;">12GetAJob</div>'
+        f'<div style="margin-top:6px;font-size:13.5px;color:#6e6c78;">'
+        f'{count} new listing{"" if count == 1 else "s"} match your saved search</div>'
+        "</td></tr>"
+        f'<tr><td style="padding:16px 20px 4px;">{cards}</td></tr>'
+        '<tr><td style="padding:18px 28px 28px;">'
+        '<a href="https://12getajob.com/jobs" style="display:inline-block;background:#0e0e12;'
+        'color:#ffffff;font-size:13.5px;font-weight:600;padding:10px 22px;border-radius:999px;'
+        'text-decoration:none;">View all matches &rarr;</a>'
+        '<div style="margin-top:22px;padding-top:16px;border-top:1px solid #efeef3;font-size:12px;'
+        'color:#9b99a5;">'
+        f'<a href="{unsub_link}" style="color:#9b99a5;">Unsubscribe</a> from these alerts.</div>'
+        # OSS_FOOTER_HTML nested inside this footer cell, not appended
+        # after the table closes -- keeps it inside the white card on the
+        # gray page background, matching the approved mockup, instead of
+        # floating on the outer <table>'s own background.
+        + OSS_FOOTER_HTML +
+        "</td></tr>"
+        "</table></td></tr></table>"
     )
