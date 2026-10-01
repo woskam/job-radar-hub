@@ -60,7 +60,7 @@ async def search_jobs(
 ) -> list[dict]:
     """Search job listings. All parameters are optional filters, combined with AND.
 
-    company: exact company name match.
+    company: substring match on the company name (e.g. "Nike" matches "Nike, Inc.").
     source: exact source/ATS platform name match.
     title_contains: case-sensitive substring match on the job title.
     location_contains: case-sensitive substring match on the location.

@@ -65,8 +65,12 @@ def query_listings(
 
     clauses, params = ["active = ?"], [active]
     if company:
-        clauses.append("company = ?")
-        params.append(company)
+        # LIKE, not exact -- matches query_new_listings_for_alert's own
+        # company filter below ("Nike" should match "Nike, Inc."), and
+        # lets /jobs' UI offer a plain free-text company field instead of
+        # an unusable 1000+-option dropdown.
+        clauses.append("company LIKE ?")
+        params.append(f"%{company}%")
     if source:
         clauses.append("source = ?")
         params.append(source)
