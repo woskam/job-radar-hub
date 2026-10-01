@@ -145,12 +145,35 @@ def render_subscribe_form(message: str | None = None) -> str:
 
 
 def confirm_email_html(base_url: str, token: str) -> str:
+    # Same card/header/button visual language as digest_email_html --
+    # token is secrets.token_urlsafe() and base_url is the server's own
+    # HUB_PUBLIC_BASE_URL, neither is attacker-controlled, so no escaping
+    # needed here the way the digest's scraped listing data requires.
     link = f"{base_url}/alerts/confirm/{token}"
     return (
-        "<p>Confirm your 12GetAJob alert subscription:</p>"
-        f'<p><a href="{link}">{link}</a></p>'
-        "<p>If you didn't request this, ignore this email -- nothing further will be sent.</p>"
-        + OSS_FOOTER_HTML
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#f4f3f7;padding:24px 0;font-family:-apple-system,BlinkMacSystemFont,'
+        '\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;"><tr><td align="center">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="max-width:600px;background:#ffffff;border:1px solid #efeef3;border-radius:16px;'
+        'overflow:hidden;">'
+        '<tr><td style="padding:26px 28px 20px;border-bottom:1px solid #efeef3;">'
+        '<div style="font-weight:700;font-size:19px;color:#0e0e12;letter-spacing:-0.01em;">12GetAJob</div>'
+        "</td></tr>"
+        '<tr><td style="padding:24px 28px 8px;">'
+        '<p style="margin:0 0 20px;font-size:15px;color:#0e0e12;line-height:1.6;">'
+        "Confirm your email alert subscription to start getting notified when new listings "
+        "match your saved search.</p>"
+        f'<a href="{link}" style="display:inline-block;background:#0e0e12;color:#ffffff;'
+        'font-size:13.5px;font-weight:600;padding:10px 22px;border-radius:999px;'
+        'text-decoration:none;">Confirm subscription</a>'
+        '<p style="margin:20px 0 0;font-size:12.5px;color:#9b99a5;line-height:1.6;">'
+        f'Or paste this link into your browser: <a href="{link}" style="color:#9b99a5;">{link}</a></p>'
+        '<p style="margin:16px 0 0;font-size:12.5px;color:#9b99a5;">'
+        "If you didn't request this, ignore this email -- nothing further will be sent.</p>"
+        + OSS_FOOTER_HTML +
+        "</td></tr>"
+        "</table></td></tr></table>"
     )
 
 
