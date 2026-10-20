@@ -25,7 +25,7 @@ ALERTS_FROM_EMAIL = os.environ.get("ALERTS_FROM_EMAIL", "onboarding@resend.dev")
 
 OSS_FOOTER_HTML = (
     '<p style="color:#888;font-size:12px;margin-top:24px;border-top:1px solid #e2e2e2;padding-top:12px;">'
-    "12GetAJob is built on open source -- "
+    "12GetAJob is built on open source: "
     '<a href="https://github.com/woskam/job-radar">job-radar</a> and '
     '<a href="https://github.com/woskam/job-radar-hub">job-radar-hub</a>. '
     "Self-host it yourself, or contribute on GitHub.</p>"
@@ -114,7 +114,7 @@ a {{ color: #1e5a8a; }}
 <body>
 <p><a href="https://12getajob.com/">&larr; 12GetAJob</a></p>
 <h1>Email alerts</h1>
-<p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password -- just an email and an unsubscribe link in every message. Already subscribed? Submit another search with the same email -- no need to confirm again.</p>
+<p class="tagline">Save a search, get a daily email when new matching listings appear. No account, no password. Just an email and an unsubscribe link in every message. Already subscribed? Submit another search with the same email, no need to confirm again.</p>
 {message_html}
 <form method="POST">
   <input type="email" name="email" placeholder="you@example.com" required>
@@ -170,7 +170,7 @@ def confirm_email_html(base_url: str, token: str) -> str:
         '<p style="margin:20px 0 0;font-size:12.5px;color:#9b99a5;line-height:1.6;">'
         f'Or paste this link into your browser: <a href="{link}" style="color:#9b99a5;">{link}</a></p>'
         '<p style="margin:16px 0 0;font-size:12.5px;color:#9b99a5;">'
-        "If you didn't request this, ignore this email -- nothing further will be sent.</p>"
+        "If you didn't request this, ignore this email. Nothing further will be sent.</p>"
         + OSS_FOOTER_HTML +
         "</td></tr>"
         "</table></td></tr></table>"

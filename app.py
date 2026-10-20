@@ -414,7 +414,7 @@ def alerts_confirm(token):
     conn.commit()
     conn.close()
     if cur.rowcount:
-        return "Subscribed -- you'll get an email when new matching listings appear."
+        return "Subscribed. You'll get an email when new matching listings appear."
     return ("That confirmation link is invalid or has already been used.", 404)
 
 
@@ -427,7 +427,7 @@ def alerts_unsubscribe(token):
     conn.commit()
     conn.close()
     if cur.rowcount:
-        return "Unsubscribed -- you won't get any more emails for that saved search."
+        return "Unsubscribed. You won't get any more emails for that saved search."
     return ("That unsubscribe link is invalid.", 404)
 
 
